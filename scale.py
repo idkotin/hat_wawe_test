@@ -28,8 +28,13 @@ DEFAULT_DRATE = "ADS1263_20SPS"
 DEFAULT_GAIN = "ADS1263_GAIN_32"
 DEFAULT_SAMPLES = 40
 DEFAULT_UNIT = "g"
+DEFAULT_REFERENCE = "avdd"
 ADC_FULL_SCALE_POSITIVE = 0x7FFFFFFF
 ADC_FULL_SCALE_NEGATIVE = -0x80000000
+REFERENCE_MUX = {
+    "internal": 0x00,  # internal +/-2.5 V reference
+    "avdd": 0x24,  # AVDD/AVSS reference, best when this HAT powers the bridge
+}
 
 
 def load_driver() -> Any:
@@ -57,13 +62,15 @@ def signed32(value: int) -> int:
     return value - 0x100000000 if value & 0x80000000 else value
 
 
-def configure_adc(ads_module: Any, channel: int, gain: str, drate: str) -> Any:
+def configure_adc(ads_module: Any, channel: int, gain: str, drate: str, reference: str) -> Any:
     if channel < 0 or channel > 4:
         raise SystemExit("Differential channel must be 0..4 (0 = IN0-IN1).")
     if gain not in ads_module.ADS1263_GAIN:
         raise SystemExit(f"Unknown gain {gain!r}. Use one of: {', '.join(ads_module.ADS1263_GAIN)}")
     if drate not in ads_module.ADS1263_DRATE:
         raise SystemExit(f"Unknown data rate {drate!r}. Use one of: {', '.join(ads_module.ADS1263_DRATE)}")
+    if reference not in REFERENCE_MUX:
+        raise SystemExit(f"Unknown reference {reference!r}. Use one of: {', '.join(REFERENCE_MUX)}")
 
     adc = ads_module.ADS1263()
     if adc.ADS1263_init_ADC1(drate) == -1:
@@ -74,7 +81,7 @@ def configure_adc(ads_module: Any, channel: int, gain: str, drate: str) -> Any:
 
     mode2 = (ads_module.ADS1263_GAIN[gain] << 4) | ads_module.ADS1263_DRATE[drate]
     adc.ADS1263_WriteReg(ads_module.ADS1263_REG["REG_MODE2"], mode2)
-    adc.ADS1263_WriteReg(ads_module.ADS1263_REG["REG_REFMUX"], 0x24)  # AVDD/AVSS reference
+    adc.ADS1263_WriteReg(ads_module.ADS1263_REG["REG_REFMUX"], REFERENCE_MUX[reference])
     adc.ADS1263_WriteReg(
         ads_module.ADS1263_REG["REG_MODE0"],
         ads_module.ADS1263_DELAY["ADS1263_DELAY_8d8ms"],
@@ -107,7 +114,7 @@ def ensure_not_saturated(mean: float, noise: float) -> None:
     ):
         raise SystemExit(
             "ADC is saturated at full-scale. This is not a valid load-cell signal.\n"
-            "Check wiring: E+ -> AVDD, E- -> AVSS/GND, SIG+ -> IN0, SIG- -> IN1.\n"
+            "Check wiring: E+ -> AVDD or terminal E+, E- -> AVSS/GND, SIG+ -> IN0, SIG- -> IN1.\n"
             "Also try lower gain: --gain ADS1263_GAIN_1, then ADS1263_GAIN_2/4/8.\n"
             f"Last average: {mean:.1f} counts, noise sigma: {noise:.1f}"
         )
@@ -134,7 +141,7 @@ def calibrate(args: argparse.Namespace) -> None:
         raise SystemExit("Known weight must be non-zero.")
 
     ads_module = load_driver()
-    adc = configure_adc(ads_module, args.channel, args.gain, args.drate)
+    adc = configure_adc(ads_module, args.channel, args.gain, args.drate, args.reference)
 
     try:
         input("Remove everything from the scale, then press Enter...")
@@ -162,6 +169,7 @@ def calibrate(args: argparse.Namespace) -> None:
             "channel": args.channel,
             "gain": args.gain,
             "drate": args.drate,
+            "reference": args.reference,
             "samples": args.samples,
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -181,6 +189,7 @@ def tare(args: argparse.Namespace) -> None:
         channel,
         args.gain or calibration["gain"],
         args.drate or calibration["drate"],
+        args.reference or calibration.get("reference", DEFAULT_REFERENCE),
     )
 
     try:
@@ -201,11 +210,12 @@ def read_loop(args: argparse.Namespace) -> None:
     channel = args.channel if args.channel is not None else calibration["channel"]
     gain = args.gain or calibration["gain"]
     drate = args.drate or calibration["drate"]
+    reference = args.reference or calibration.get("reference", DEFAULT_REFERENCE)
     samples = args.samples or calibration["samples"]
     unit = calibration["unit"]
 
     ads_module = load_driver()
-    adc = configure_adc(ads_module, channel, gain, drate)
+    adc = configure_adc(ads_module, channel, gain, drate, reference)
 
     filtered_weight: float | None = None
     try:
@@ -231,7 +241,7 @@ def read_loop(args: argparse.Namespace) -> None:
 
 def raw_loop(args: argparse.Namespace) -> None:
     ads_module = load_driver()
-    adc = configure_adc(ads_module, args.channel, args.gain, args.drate)
+    adc = configure_adc(ads_module, args.channel, args.gain, args.drate, args.reference)
     try:
         print("Raw differential counts. Press Ctrl+C to stop.")
         while True:
@@ -261,6 +271,12 @@ def build_parser() -> argparse.ArgumentParser:
     cal.add_argument("--channel", type=int, default=DEFAULT_CHANNEL, help="Differential channel 0..4.")
     cal.add_argument("--gain", default=DEFAULT_GAIN, help="ADS1263 PGA gain.")
     cal.add_argument("--drate", default=DEFAULT_DRATE, help="ADS1263 ADC1 data rate.")
+    cal.add_argument(
+        "--reference",
+        choices=sorted(REFERENCE_MUX),
+        default=DEFAULT_REFERENCE,
+        help="ADC reference: avdd for standalone HAT excitation, internal when another terminal powers the bridge.",
+    )
     cal.add_argument("--samples", type=int, default=DEFAULT_SAMPLES, help="Samples to average.")
     cal.set_defaults(func=calibrate)
 
@@ -268,6 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     read.add_argument("--channel", type=int, help="Override differential channel 0..4.")
     read.add_argument("--gain", help="Override ADS1263 PGA gain.")
     read.add_argument("--drate", help="Override ADS1263 ADC1 data rate.")
+    read.add_argument("--reference", choices=sorted(REFERENCE_MUX), help="Override ADC reference.")
     read.add_argument("--samples", type=int, help="Samples to average.")
     read.add_argument("--interval", type=float, default=0.2, help="Delay between prints, seconds.")
     read.add_argument("--alpha", type=float, default=0.25, help="Display smoothing 0..1.")
@@ -277,6 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
     zero.add_argument("--channel", type=int, help="Override differential channel 0..4.")
     zero.add_argument("--gain", help="Override ADS1263 PGA gain.")
     zero.add_argument("--drate", help="Override ADS1263 ADC1 data rate.")
+    zero.add_argument("--reference", choices=sorted(REFERENCE_MUX), help="Override ADC reference.")
     zero.add_argument("--samples", type=int, help="Samples to average.")
     zero.set_defaults(func=tare)
 
@@ -284,6 +302,12 @@ def build_parser() -> argparse.ArgumentParser:
     raw.add_argument("--channel", type=int, default=DEFAULT_CHANNEL, help="Differential channel 0..4.")
     raw.add_argument("--gain", default=DEFAULT_GAIN, help="ADS1263 PGA gain.")
     raw.add_argument("--drate", default=DEFAULT_DRATE, help="ADS1263 ADC1 data rate.")
+    raw.add_argument(
+        "--reference",
+        choices=sorted(REFERENCE_MUX),
+        default=DEFAULT_REFERENCE,
+        help="ADC reference: use internal when another terminal powers the bridge.",
+    )
     raw.add_argument("--samples", type=int, default=DEFAULT_SAMPLES, help="Samples to average.")
     raw.add_argument("--interval", type=float, default=0.2, help="Delay between prints, seconds.")
     raw.set_defaults(func=raw_loop)

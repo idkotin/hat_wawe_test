@@ -76,4 +76,28 @@ If raw output is stuck near `2147483647` or `-2147483648`, the ADC input is satu
 sudo python3 scale.py raw --gain ADS1263_GAIN_1
 ```
 
+## Parallel With Original Terminal
+
+Let the original terminal power the bridge. The HAT should only listen to the signal:
+
+```text
+blue        -> terminal E+
+white-green -> terminal E-
+white-blue  -> terminal SIG+
+green       -> terminal SIG-
+
+HAT IN0      -> terminal SIG+ / white-blue
+HAT IN1      -> terminal SIG- / green
+HAT AVSS/GND -> terminal E- / white-green
+HAT AVDD/5V  -> not connected to the load-cell/terminal wires
+```
+
+Use the internal ADC reference in this mode:
+
+```bash
+sudo python3 scale.py raw --reference internal --gain ADS1263_GAIN_1
+sudo python3 scale.py calibrate --known 1400 --unit g --reference internal --gain ADS1263_GAIN_1
+sudo python3 scale.py read
+```
+
 Defaults are differential channel `0` (`IN0-IN1`), data rate `ADS1263_20SPS`, PGA gain `ADS1263_GAIN_32`, and 40 averaged samples.
