@@ -36,6 +36,7 @@ Clone and run:
 cd ~
 git clone https://github.com/idkotin/hat_wawe_test.git
 cd hat_wawe_test
+sudo python3 scale.py raw --gain ADS1263_GAIN_1
 sudo python3 scale.py calibrate --known 1000 --unit g
 sudo python3 scale.py read
 ```
@@ -47,3 +48,5 @@ sudo python3 scale.py tare
 ```
 
 The Raspberry Pi hostname may be `isrk`; the driver in this repo no longer depends on the hostname being exactly `raspberrypi`.
+
+If raw output is stuck near `2147483647` or `-2147483648`, the ADC input is saturated. Check that the bridge is powered and wired as `E+ -> AVDD/5V`, `E- -> AVSS/GND`, `SIG+ -> IN0`, `SIG- -> IN1`, and start with `--gain ADS1263_GAIN_1`.

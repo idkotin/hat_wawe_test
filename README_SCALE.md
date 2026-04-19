@@ -70,4 +70,10 @@ Debug raw ADC counts:
 sudo python3 scale.py raw
 ```
 
+If raw output is stuck near `2147483647` or `-2147483648`, the ADC input is saturated. Check the four load-cell wires and start with low gain:
+
+```bash
+sudo python3 scale.py raw --gain ADS1263_GAIN_1
+```
+
 Defaults are differential channel `0` (`IN0-IN1`), data rate `ADS1263_20SPS`, PGA gain `ADS1263_GAIN_32`, and 40 averaged samples.

@@ -28,6 +28,8 @@ DEFAULT_DRATE = "ADS1263_20SPS"
 DEFAULT_GAIN = "ADS1263_GAIN_32"
 DEFAULT_SAMPLES = 40
 DEFAULT_UNIT = "g"
+ADC_FULL_SCALE_POSITIVE = 0x7FFFFFFF
+ADC_FULL_SCALE_NEGATIVE = -0x80000000
 
 
 def load_driver() -> Any:
@@ -72,7 +74,7 @@ def configure_adc(ads_module: Any, channel: int, gain: str, drate: str) -> Any:
 
     mode2 = (ads_module.ADS1263_GAIN[gain] << 4) | ads_module.ADS1263_DRATE[drate]
     adc.ADS1263_WriteReg(ads_module.ADS1263_REG["REG_MODE2"], mode2)
-    adc.ADS1263_WriteReg(ads_module.ADS1263_REG["REG_REFMUX"], 0x00)  # internal +/-2.5 V ref
+    adc.ADS1263_WriteReg(ads_module.ADS1263_REG["REG_REFMUX"], 0x24)  # AVDD/AVSS reference
     adc.ADS1263_WriteReg(
         ads_module.ADS1263_REG["REG_MODE0"],
         ads_module.ADS1263_DELAY["ADS1263_DELAY_8d8ms"],
@@ -95,6 +97,20 @@ def average_count(adc: Any, channel: int, samples: int, discard: int = 5) -> tup
     mean = statistics.fmean(values)
     stdev = statistics.pstdev(values) if len(values) > 1 else 0.0
     return mean, stdev
+
+
+def ensure_not_saturated(mean: float, noise: float) -> None:
+    full_scale_margin = 1000
+    if (
+        abs(mean - ADC_FULL_SCALE_POSITIVE) <= full_scale_margin
+        or abs(mean - ADC_FULL_SCALE_NEGATIVE) <= full_scale_margin
+    ):
+        raise SystemExit(
+            "ADC is saturated at full-scale. This is not a valid load-cell signal.\n"
+            "Check wiring: E+ -> AVDD, E- -> AVSS/GND, SIG+ -> IN0, SIG- -> IN1.\n"
+            "Also try lower gain: --gain ADS1263_GAIN_1, then ADS1263_GAIN_2/4/8.\n"
+            f"Last average: {mean:.1f} counts, noise sigma: {noise:.1f}"
+        )
 
 
 def save_calibration(data: dict[str, Any]) -> None:
@@ -124,10 +140,12 @@ def calibrate(args: argparse.Namespace) -> None:
         input("Remove everything from the scale, then press Enter...")
         zero, zero_noise = average_count(adc, args.channel, args.samples)
         print(f"Zero: {zero:.1f} counts, noise sigma: {zero_noise:.1f}")
+        ensure_not_saturated(zero, zero_noise)
 
         input(f"Put exactly {known:g} {args.unit} on the scale, then press Enter...")
         loaded, loaded_noise = average_count(adc, args.channel, args.samples)
         print(f"Loaded: {loaded:.1f} counts, noise sigma: {loaded_noise:.1f}")
+        ensure_not_saturated(loaded, loaded_noise)
 
         span = loaded - zero
         if abs(span) < 100:
@@ -168,6 +186,7 @@ def tare(args: argparse.Namespace) -> None:
     try:
         input("Remove everything from the scale, then press Enter to tare...")
         zero, noise = average_count(adc, channel, args.samples or calibration["samples"])
+        ensure_not_saturated(zero, noise)
         calibration["zero_counts"] = zero
         calibration["channel"] = channel
         calibration["tare_updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -193,6 +212,7 @@ def read_loop(args: argparse.Namespace) -> None:
         print("Reading weight. Press Ctrl+C to stop.")
         while True:
             count, noise = average_count(adc, channel, samples, discard=1)
+            ensure_not_saturated(count, noise)
             weight = (count - calibration["zero_counts"]) / calibration["counts_per_unit"]
             filtered_weight = weight if filtered_weight is None else (
                 args.alpha * weight + (1.0 - args.alpha) * filtered_weight
@@ -216,7 +236,11 @@ def raw_loop(args: argparse.Namespace) -> None:
         print("Raw differential counts. Press Ctrl+C to stop.")
         while True:
             count, noise = average_count(adc, args.channel, args.samples, discard=1)
-            sys.stdout.write(f"\rraw: {count:12.1f}   noise: {noise:8.1f}   ")
+            status = " SATURATED " if (
+                abs(count - ADC_FULL_SCALE_POSITIVE) <= 1000
+                or abs(count - ADC_FULL_SCALE_NEGATIVE) <= 1000
+            ) else ""
+            sys.stdout.write(f"\rraw: {count:12.1f}   noise: {noise:8.1f} {status:11s}")
             sys.stdout.flush()
             time.sleep(args.interval)
     except KeyboardInterrupt:
