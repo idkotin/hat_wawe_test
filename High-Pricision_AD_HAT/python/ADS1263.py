@@ -464,7 +464,7 @@ class ADS1263:
             # config.delay_ms(2) 
             self.ADS1263_WriteCmd(ADS1263_CMD['CMD_START2'])
             # config.delay_ms(2) 
-            Value = self.ADS1263_Read_AD2C_Data()
+            Value = self.ADS1263_Read_ADC2_Data()
         return Value
         
 

@@ -76,7 +76,9 @@ HAT AVDD/5V  -> leave disconnected from the terminal/load-cell wires
 Run with the internal ADC reference:
 
 ```bash
-sudo python3 scale.py raw --reference internal --gain ADS1263_GAIN_1
-sudo python3 scale.py calibrate --known 1400 --unit g --reference internal --gain ADS1263_GAIN_1
+sudo python3 scale.py raw --frontend adc2 --reference internal --gain ADS1263_GAIN_1
+sudo python3 scale.py calibrate --known 1400 --unit g --frontend adc2 --reference internal --gain ADS1263_GAIN_1
 sudo python3 scale.py read
 ```
+
+If `adc1` disturbs the original terminal, try `--frontend adc2` first. It uses the lower-impact ADC2 path in ADS1263 for parallel sniffing.

@@ -95,9 +95,11 @@ HAT AVDD/5V  -> not connected to the load-cell/terminal wires
 Use the internal ADC reference in this mode:
 
 ```bash
-sudo python3 scale.py raw --reference internal --gain ADS1263_GAIN_1
-sudo python3 scale.py calibrate --known 1400 --unit g --reference internal --gain ADS1263_GAIN_1
+sudo python3 scale.py raw --frontend adc2 --reference internal --gain ADS1263_GAIN_1
+sudo python3 scale.py calibrate --known 1400 --unit g --frontend adc2 --reference internal --gain ADS1263_GAIN_1
 sudo python3 scale.py read
 ```
+
+If `adc1` interferes with the original terminal, use `--frontend adc2`. This path is intended for lower-impact parallel reading.
 
 Defaults are differential channel `0` (`IN0-IN1`), data rate `ADS1263_20SPS`, PGA gain `ADS1263_GAIN_32`, and 40 averaged samples.
