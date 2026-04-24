@@ -11,6 +11,7 @@ Typical flow on Raspberry Pi:
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import json
 import statistics
 import sys
@@ -31,8 +32,9 @@ DEFAULT_UNIT = "g"
 DEFAULT_REFERENCE = "avdd"
 DEFAULT_FRONTEND = "adc1"
 DEFAULT_ADC2_DRATE = "ADS1263_ADC2_400SPS"
-DEFAULT_ADC2_READ_SAMPLES = 12
-DEFAULT_ADC2_READ_ALPHA = 0.55
+DEFAULT_ADC2_READ_SAMPLES = 18
+DEFAULT_ADC2_READ_ALPHA = 0.18
+DEFAULT_MEDIAN_WINDOW = 5
 ADC_FULL_SCALE_POSITIVE = 0x7FFFFFFF
 ADC_FULL_SCALE_NEGATIVE = -0x80000000
 REFERENCE_MUX = {
@@ -167,6 +169,14 @@ def resolve_read_alpha(frontend: str, requested_alpha: float) -> float:
     return requested_alpha
 
 
+def resolve_median_window(frontend: str, requested_window: int) -> int:
+    if requested_window > 0:
+        return requested_window
+    if frontend == "adc2":
+        return DEFAULT_MEDIAN_WINDOW
+    return 1
+
+
 def ensure_not_saturated(mean: float, noise: float) -> None:
     full_scale_margin = 1000
     if (
@@ -286,20 +296,24 @@ def read_loop(args: argparse.Namespace) -> None:
     frontend = args.frontend or calibration.get("frontend", DEFAULT_FRONTEND)
     samples = resolve_read_samples(frontend, args.samples, calibration["samples"])
     alpha = resolve_read_alpha(frontend, args.alpha)
+    median_window = resolve_median_window(frontend, args.median_window)
     unit = calibration["unit"]
 
     ads_module = load_driver()
     adc = configure_adc(ads_module, channel, gain, drate, reference, frontend)
 
     filtered_weight: float | None = None
+    recent_weights: deque[float] = deque(maxlen=median_window)
     try:
         print("Reading weight. Press Ctrl+C to stop.")
         while True:
             count, noise = average_count(adc, channel, samples, frontend, ads_module, discard=1)
             ensure_not_saturated(count, noise)
             weight = (count - calibration["zero_counts"]) / calibration["counts_per_unit"]
-            filtered_weight = weight if filtered_weight is None else (
-                alpha * weight + (1.0 - alpha) * filtered_weight
+            recent_weights.append(weight)
+            median_weight = statistics.median(recent_weights)
+            filtered_weight = median_weight if filtered_weight is None else (
+                alpha * median_weight + (1.0 - alpha) * filtered_weight
             )
             sys.stdout.write(
                 f"\rweight: {filtered_weight:10.2f} {unit}   "
@@ -376,6 +390,12 @@ def build_parser() -> argparse.ArgumentParser:
     read.add_argument("--samples", type=int, help="Samples to average.")
     read.add_argument("--interval", type=float, default=0.2, help="Delay between prints, seconds.")
     read.add_argument("--alpha", type=float, default=0.25, help="Display smoothing 0..1.")
+    read.add_argument(
+        "--median-window",
+        type=int,
+        default=0,
+        help="Median window for display smoothing; 0 uses frontend defaults.",
+    )
     read.set_defaults(func=read_loop)
 
     zero = sub.add_parser("tare", help="Update zero using existing calibration.")
