@@ -30,7 +30,9 @@ DEFAULT_SAMPLES = 40
 DEFAULT_UNIT = "g"
 DEFAULT_REFERENCE = "avdd"
 DEFAULT_FRONTEND = "adc1"
-DEFAULT_ADC2_DRATE = "ADS1263_ADC2_100SPS"
+DEFAULT_ADC2_DRATE = "ADS1263_ADC2_400SPS"
+DEFAULT_ADC2_READ_SAMPLES = 12
+DEFAULT_ADC2_READ_ALPHA = 0.55
 ADC_FULL_SCALE_POSITIVE = 0x7FFFFFFF
 ADC_FULL_SCALE_NEGATIVE = -0x80000000
 REFERENCE_MUX = {
@@ -151,6 +153,20 @@ def average_count(
     return mean, stdev
 
 
+def resolve_read_samples(frontend: str, requested_samples: int | None, calibration_samples: int) -> int:
+    if requested_samples is not None:
+        return requested_samples
+    if frontend == "adc2":
+        return min(calibration_samples, DEFAULT_ADC2_READ_SAMPLES)
+    return calibration_samples
+
+
+def resolve_read_alpha(frontend: str, requested_alpha: float) -> float:
+    if frontend == "adc2" and requested_alpha == 0.25:
+        return DEFAULT_ADC2_READ_ALPHA
+    return requested_alpha
+
+
 def ensure_not_saturated(mean: float, noise: float) -> None:
     full_scale_margin = 1000
     if (
@@ -268,7 +284,8 @@ def read_loop(args: argparse.Namespace) -> None:
     drate = args.drate or calibration["drate"]
     reference = args.reference or calibration.get("reference", DEFAULT_REFERENCE)
     frontend = args.frontend or calibration.get("frontend", DEFAULT_FRONTEND)
-    samples = args.samples or calibration["samples"]
+    samples = resolve_read_samples(frontend, args.samples, calibration["samples"])
+    alpha = resolve_read_alpha(frontend, args.alpha)
     unit = calibration["unit"]
 
     ads_module = load_driver()
@@ -282,7 +299,7 @@ def read_loop(args: argparse.Namespace) -> None:
             ensure_not_saturated(count, noise)
             weight = (count - calibration["zero_counts"]) / calibration["counts_per_unit"]
             filtered_weight = weight if filtered_weight is None else (
-                args.alpha * weight + (1.0 - args.alpha) * filtered_weight
+                alpha * weight + (1.0 - alpha) * filtered_weight
             )
             sys.stdout.write(
                 f"\rweight: {filtered_weight:10.2f} {unit}   "
